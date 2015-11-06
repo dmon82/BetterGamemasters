@@ -159,8 +159,9 @@ public class BetterGamemasters implements WurmMod, Configurable, PreInitable {
             
             * Actual code is:
                 try {
-                    Creature owner = Server.getInstance().getCreature(this.getOwnerId());
-                    if (owner != null && owner.getPower() >= minPower)
+                    long ownerID = this.getOwnerId();
+            
+                    if (ownerID != -10L && Server.getInstance().getCreature(ownerID).getPower() >= minPower)
                         return false;
                 } catch (NoSuchCreatureException nsc) {
                     DbItem.logger.log(Level.WARNING, nsc.getMessage(), (Throwable)nsc);
@@ -174,8 +175,8 @@ public class BetterGamemasters implements WurmMod, Configurable, PreInitable {
             method.insertBefore(
                     "{"
                         + "try {" 
-                        + "com.wurmonline.server.creatures.Creature owner = com.wurmonline.server.Server.getInstance().getCreature(this.getOwnerId());"
-                        + " if (owner != null && owner.getPower() >= " + _noDamageOnGamemasterOwnedItems + ") return false;"
+                        + "long bgOwnerID = this.getOwnerId();"
+                        + "if (bgOwnerID != -10L && com.wurmonline.server.Server.getInstance().getCreature(bgOwnerID).getPower() >= " + _noDamageOnGamemasterOwnedItems + ") return false;"
                         + "} catch (com.wurmonline.server.creatures.NoSuchCreatureException nsc) {"
                         + "com.wurmonline.server.items.DbItem.logger.log(java.util.logging.Level.WARNING, nsc.getMessage(), (Throwable)nsc); "
                         + "} catch (com.wurmonline.server.NoSuchPlayerException nsp) {"
