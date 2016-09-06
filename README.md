@@ -2,7 +2,7 @@
 Wurm Unlimited mod(s) focusing on in-game utility for staff/Gamemasters
 
 * No 100 item limit in inventory.
-* Not slowed by weight (doesn't work anymore).
+* Not slowed by weight (if it's not working, it's a possible mod conflict that overrides the modified methods).
 * No carry weight limits.
 * No material requirements for floors and ceilings, and instant building.
 * No damage on items owned by gamemasters.
