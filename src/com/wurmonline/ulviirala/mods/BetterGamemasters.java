@@ -1,5 +1,6 @@
 package com.wurmonline.ulviirala.mods;
 
+import java.lang.reflect.Modifier;
 import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -8,21 +9,26 @@ import javassist.CtClass;
 import javassist.CtMethod;
 import javassist.CtPrimitiveType;
 import javassist.NotFoundException;
+import javassist.bytecode.BadBytecode;
+import javassist.bytecode.CodeIterator;
 import javassist.bytecode.Descriptor;
+import javassist.bytecode.Opcode;
 import javassist.expr.ExprEditor;
 import javassist.expr.MethodCall;
 import org.gotti.wurmunlimited.modloader.classhooks.HookException;
 import org.gotti.wurmunlimited.modloader.classhooks.HookManager;
 import org.gotti.wurmunlimited.modloader.interfaces.Configurable;
 import org.gotti.wurmunlimited.modloader.interfaces.PreInitable;
+import org.gotti.wurmunlimited.modloader.interfaces.ServerStartedListener;
 import org.gotti.wurmunlimited.modloader.interfaces.WurmServerMod;
+import org.gotti.wurmunlimited.modsupport.actions.ModActions;
 
 /**
  * Implements several things that are meant to make a Gamemaster's life a bit
  * easier, by providing utility and convenience.
  */
-public class BetterGamemasters implements WurmServerMod, Configurable, PreInitable {
-    private Logger _logger = Logger.getLogger(this.getClass().getName());
+public class BetterGamemasters implements WurmServerMod, Configurable, PreInitable, ServerStartedListener {
+    private static final Logger _logger = Logger.getLogger(BetterGamemasters.class.getName() + " v1.2");
 
     // Whether or not this option should be enabled or not.
     private boolean _noCarryWeightLimit = true;
@@ -40,6 +46,8 @@ public class BetterGamemasters implements WurmServerMod, Configurable, PreInitab
     
     private boolean _noItemLimit = true;
     private int _noItemLimitPower = 1;
+
+    private boolean _noDropItemLimit = true;
     
     @Override
     public void configure(Properties properties) {
@@ -57,11 +65,18 @@ public class BetterGamemasters implements WurmServerMod, Configurable, PreInitab
         _noItemLimit = Boolean.valueOf(properties.getProperty("noItemLimit", Boolean.toString(_noItemLimit)));
         _noItemLimitPower = Integer.valueOf(properties.getProperty("noItemLimitPower", String.valueOf(_noItemLimitPower)));
         
+        _noDropItemLimit = Boolean.valueOf(properties.getProperty("noDropItemLimit", String.valueOf(_noDropItemLimit)));
+        
         Log("No carry weight limit: ", _noCarryWeightLimit, _noCarryWeightLimitPower);
         Log("Not slowed by inventory weight: ", _notSlowedByWeight, _notSlowedByWeightPower);
         Log("No damage on GM owned items: ", _noDamageOnGamemasterOwnedItems, _noDamageOnGamemasterOwnedItemsPower);
         Log("No Floor building requirements: ", _noFloorBuildingRequirements, 2);
         Log("No item limit: ", _noItemLimit, _noItemLimitPower);
+    }
+    
+    @Override
+    public void onServerStarted() {
+        ModActions.registerAction(new SpawnTowerGuardAction());
     }
     
     private void Log(String forFeature, boolean activated, int power) {
@@ -77,19 +92,65 @@ public class BetterGamemasters implements WurmServerMod, Configurable, PreInitab
 
     @Override
     public void preInit() {
-        if (_noCarryWeightLimit)
-            NoCarryWeightLimit();
+        SpawnTowerGuards();
+        ModActions.init();
         
-        if (_notSlowedByWeight)
-            NotSlowedByWeight();
+        if (_noCarryWeightLimit) NoCarryWeightLimit();
+        if (_notSlowedByWeight) NotSlowedByWeight();
+        if (_noDamageOnGamemasterOwnedItems) NoDamageOnGamemasterOwnedItems();
+        if (_noFloorBuildingRequirements) NoFloorBuildingRequirements();
+        if (_noDropItemLimit) NoDropItemLimit();
+    }
+    
+    private void SpawnTowerGuards() {
+        _logger.info("Trying to mal pollGuards() methods public.");
         
-        if (_noDamageOnGamemasterOwnedItems)
-            NoDamageOnGamemasterOwnedItems();
-        
-        if (_noFloorBuildingRequirements)
-            NoFloorBuildingRequirements();
+        try {
+            CtMethod method = HookManager.getInstance().getClassPool().get("com.wurmonline.server.kingdom.GuardTower")
+                    .getMethod("pollGuards", "()V");
+            method.setModifiers((method.getModifiers() & ~Modifier.PRIVATE) | Modifier.PUBLIC);
+            
+            method = HookManager.getInstance().getClassPool().get("com.wurmonline.server.villages.GuardPlan")
+                    .getMethod("pollGuards", "()V");
+            method.setModifiers((method.getModifiers() & ~Modifier.PRIVATE) | Modifier.PUBLIC);
+            
+            _logger.info("pollGuards() methods are now public.");
+        }
+        catch (Exception e) {
+            _logger.log(Level.SEVERE, "Couldn't make pollGuards() methods public.", e);
+        }
     }
 
+    private void NoDropItemLimit() {
+        _logger.info("Applying patch for no drop item limit.");
+        
+        try {
+            CodeIterator it =
+                HookManager.getInstance().getClassPool().get("com.wurmonline.server.behaviours.MethodsItems")
+                    .getMethod("drop", "(Lcom/wurmonline/server/creatures/Creature;Lcom/wurmonline/server/items/Item;Z)[Ljava/lang/String;")
+                    .getMethodInfo()
+                    .getCodeAttribute()
+                    .iterator();
+            
+            while (it.hasNext()) {
+                int index = it.next();
+                int opcode = it.byteAt(index);
+                
+                if (opcode == Opcode.BIPUSH && it.byteAt(index + 1) == 120) {
+                    _logger.log(Level.INFO, "Found opcode at index #{0}.", index);
+                    it.write(new byte[] { 0x00, 0x00 }, index);
+                    it.insertAt(index, new byte[] { 0x11, 32767 >> 8, (byte)(32767 & 0xFF) } );
+                    break;
+                }
+            }
+            
+            _logger.info("Removed drop limit for non-players.");
+        }
+        catch (NotFoundException | BadBytecode e) {
+            _logger.log(Level.SEVERE, "Can't apply patch for no drop item limit.", e);
+        }           
+    }
+    
     /**
      * Effectively makes players with the set MGMT power or above able to pick
      * up items beyond their body strength limit.
@@ -110,7 +171,7 @@ public class BetterGamemasters implements WurmServerMod, Configurable, PreInitab
             method = ctClass.getMethod("getCarryingCapacityLeft", Descriptor.ofMethod(CtPrimitiveType.intType, new CtClass[0]));
             method.insertBefore("{ if (this.getPower() >= " + _noCarryWeightLimitPower + ") return 0x7FFFFFFF; }");
             
-        } catch (CannotCompileException | NotFoundException ex) {
+        } catch (Exception ex) {
             throw new HookException(ex);
         }
     }
